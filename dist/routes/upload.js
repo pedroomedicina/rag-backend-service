@@ -9,9 +9,11 @@ const multer_1 = __importDefault(require("multer"));
 const path_1 = __importDefault(require("path"));
 const uuid_1 = require("uuid");
 const documentProcessor_1 = require("../services/documentProcessor");
+const vectorStore_1 = require("../services/vectorStore");
 const router = express_1.default.Router();
 exports.uploadRoutes = router;
 const documentProcessor = new documentProcessor_1.DocumentProcessor();
+const vectorStore = new vectorStore_1.VectorStoreService();
 // Configure multer for file uploads
 const storage = multer_1.default.diskStorage({
     destination: (req, file, cb) => {
@@ -52,8 +54,11 @@ router.post('/', upload.single('document'), async (req, res) => {
         const filename = req.file.originalname;
         // Process the document
         const { content, chunks } = await documentProcessor.processDocument(filePath, filename);
-        // TODO: Store chunks in vector database
-        // This will be implemented in the next step
+        // Store chunks in vector database
+        await vectorStore.addDocumentChunks(documentId, chunks, {
+            filename: req.file.filename,
+            originalName: filename
+        });
         const response = {
             success: true,
             documentId,

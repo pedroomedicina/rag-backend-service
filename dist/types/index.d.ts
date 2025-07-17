@@ -17,6 +17,7 @@ export interface Chunk {
         endIndex: number;
     };
     embedding?: number[];
+    score?: number;
 }
 export interface QAResponse {
     answer: string;

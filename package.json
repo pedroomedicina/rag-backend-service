@@ -15,6 +15,7 @@
   "type": "commonjs",
   "dependencies": {
     "@langchain/community": "^0.3.49",
+    "@langchain/core": "^0.3.64",
     "@langchain/openai": "^0.6.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
