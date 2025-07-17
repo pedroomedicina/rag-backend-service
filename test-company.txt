@@ -1,0 +1,20 @@
+Acme Corporation Company Information
+
+Founded: 2020
+CEO: John Smith
+Employees: 500
+Headquarters: San Francisco, California
+
+Products:
+- Cloud Storage Solutions
+- Data Analytics Platform
+- AI-powered recommendations
+
+Revenue 2023: $50 million
+Market: Enterprise B2B software
+
+Recent Achievements:
+- Launched new AI platform in Q4 2023
+- Expanded to European markets
+- Partnership with major tech companies
+- 99.9% uptime across all services 

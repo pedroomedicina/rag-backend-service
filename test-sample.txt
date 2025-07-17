@@ -1,0 +1,17 @@
+Sample Document for RAG Testing
+
+This is a test document about artificial intelligence and machine learning.
+
+Key Topics:
+- Machine Learning is a subset of AI that focuses on algorithms
+- Neural Networks are inspired by biological neurons
+- Deep Learning uses multiple layers to process data
+- Natural Language Processing helps computers understand human language
+
+The document was created in 2024 for testing purposes.
+
+Additional Information:
+- AI systems can process vast amounts of data
+- Machine learning algorithms learn from examples
+- Deep learning requires significant computational power
+- NLP enables chatbots and translation services 

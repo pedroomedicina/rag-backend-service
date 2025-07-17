@@ -4,10 +4,19 @@ import { VectorStoreService } from '../services/vectorStore';
 import { QAResponse } from '../types';
 
 const router = express.Router();
-const vectorStore = new VectorStoreService();
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+
+// Initialize services lazily to ensure environment variables are loaded
+let openai: OpenAI;
+
+function getServices() {
+  const vectorStore = VectorStoreService.getInstance();
+  if (!openai) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+  }
+  return { vectorStore, openai };
+}
 
 // POST /api/qa - Ask questions about uploaded documents
 router.post('/', async (req, res) => {
@@ -20,10 +29,24 @@ router.post('/', async (req, res) => {
       });
     }
 
+    // Get initialized services
+    const { vectorStore, openai } = getServices();
+
+    // Debug: Check collection info
+    const collectionInfo = await vectorStore.getCollectionInfo();
+    console.log(`🔍 QA: Collection has ${collectionInfo.count} chunks`);
+
     // 1. Search vector database for relevant chunks
+    console.log(`🔍 QA: Searching for chunks with query: "${query}"`);
     const relevantChunks = await vectorStore.searchSimilarChunks(query, 5);
+    console.log(`🔍 QA: Found ${relevantChunks.length} chunks`);
+    
+    if (relevantChunks.length > 0) {
+      console.log('🔍 QA: First chunk preview:', relevantChunks[0].content.substring(0, 100));
+    }
 
     if (relevantChunks.length === 0) {
+      console.log('🔍 QA: No relevant chunks found, returning empty response');
       return res.json({
         answer: "I couldn't find any relevant information in the uploaded documents to answer your question.",
         sources: [],

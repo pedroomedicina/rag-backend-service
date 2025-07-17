@@ -1,25 +1,37 @@
-import { Chroma } from '@langchain/community/vectorstores/chroma';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { Document } from '@langchain/core/documents';
 import { Chunk } from '../types';
 
-export class VectorStoreService {
-  private chroma: Chroma;
-  private embeddings: OpenAIEmbeddings;
+interface StoredChunk {
+  id: string;
+  content: string;
+  embedding: number[];
+  metadata: {
+    documentId: string;
+    chunkIndex: number;
+    filename: string;
+    originalName: string;
+    source: string;
+  };
+}
 
-  constructor() {
+export class VectorStoreService {
+  private static instance: VectorStoreService | null = null;
+  private embeddings: OpenAIEmbeddings;
+  private chunks: StoredChunk[] = [];
+
+  private constructor() {
     this.embeddings = new OpenAIEmbeddings({
       openAIApiKey: process.env.OPENAI_API_KEY,
       modelName: 'text-embedding-3-small'
     });
+  }
 
-    this.chroma = new Chroma(this.embeddings, {
-      collectionName: 'rag-documents',
-      url: `http://${process.env.CHROMA_HOST}:${process.env.CHROMA_PORT}`,
-      collectionMetadata: {
-        'hnsw:space': 'cosine'
-      }
-    });
+  public static getInstance(): VectorStoreService {
+    if (!VectorStoreService.instance) {
+      VectorStoreService.instance = new VectorStoreService();
+    }
+    return VectorStoreService.instance;
   }
 
   async addDocumentChunks(
@@ -28,25 +40,34 @@ export class VectorStoreService {
     metadata: { filename: string; originalName: string }
   ): Promise<void> {
     try {
-      // Convert chunks to LangChain documents with metadata
-      const documents: Document[] = chunks.map((chunk, index) => ({
-        pageContent: chunk,
-        metadata: {
-          documentId,
-          chunkIndex: index,
-          filename: metadata.filename,
-          originalName: metadata.originalName,
-          source: `${metadata.originalName}#chunk-${index}`
-        }
-      }));
+      console.log(`🔄 Processing ${chunks.length} chunks for embedding...`);
+      
+      // Generate embeddings for all chunks
+      const embeddings = await this.embeddings.embedDocuments(chunks);
+      
+      // Store chunks with embeddings
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkId = `${documentId}-chunk-${i}`;
+        const storedChunk: StoredChunk = {
+          id: chunkId,
+          content: chunks[i],
+          embedding: embeddings[i],
+          metadata: {
+            documentId,
+            chunkIndex: i,
+            filename: metadata.filename,
+            originalName: metadata.originalName,
+            source: `${metadata.originalName}#chunk-${i}`
+          }
+        };
+        
+        // Remove any existing chunks with the same ID
+        this.chunks = this.chunks.filter(c => c.id !== chunkId);
+        this.chunks.push(storedChunk);
+      }
 
-      // Generate unique IDs for each chunk
-      const ids = chunks.map((_, index) => `${documentId}-chunk-${index}`);
-
-      // Add documents to Chroma
-      await this.chroma.addDocuments(documents, { ids });
-
-      console.log(`✅ Added ${chunks.length} chunks to vector store for document ${documentId}`);
+      console.log(`✅ Added ${chunks.length} chunks to in-memory vector store for document ${documentId}`);
+      console.log(`📊 Total chunks in store: ${this.chunks.length}`);
     } catch (error) {
       console.error('Error adding chunks to vector store:', error);
       throw new Error(`Failed to store document chunks: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -55,39 +76,86 @@ export class VectorStoreService {
 
   async searchSimilarChunks(query: string, topK: number = 5): Promise<Chunk[]> {
     try {
-      // Perform similarity search
-      const results = await this.chroma.similaritySearchWithScore(query, topK);
+      if (this.chunks.length === 0) {
+        console.log('No chunks available for search');
+        return [];
+      }
 
-      // Convert LangChain documents back to our Chunk interface
-      const chunks: Chunk[] = results.map(([doc, score]: [Document, number]) => ({
-        id: doc.metadata.source || 'unknown',
-        content: doc.pageContent,
+      console.log(`🔍 Searching ${this.chunks.length} chunks for query: "${query}"`);
+      
+      // Generate embedding for the query
+      const queryEmbedding = await this.embeddings.embedQuery(query);
+      
+      // Calculate cosine similarity for each chunk
+      const similarities = this.chunks.map(chunk => ({
+        chunk,
+        similarity: this.cosineSimilarity(queryEmbedding, chunk.embedding)
+      }));
+      
+      // Debug: Show all similarity scores
+      console.log('All similarity scores:');
+      similarities.forEach((item, index) => {
+        console.log(`  Chunk ${index}: ${item.similarity.toFixed(4)} - "${item.chunk.content.substring(0, 50)}..."`);
+      });
+      
+      // Sort by similarity (highest first) and take top K
+      const topResults = similarities
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, topK);
+      
+      // Convert to our Chunk interface
+      const results: Chunk[] = topResults.map(({ chunk, similarity }) => ({
+        id: chunk.id,
+        content: chunk.content,
         metadata: {
-          documentId: doc.metadata.documentId,
-          chunkIndex: doc.metadata.chunkIndex,
-          startIndex: 0, // We don't track character positions yet
-          endIndex: doc.pageContent.length
+          documentId: chunk.metadata.documentId,
+          chunkIndex: chunk.metadata.chunkIndex,
+          startIndex: 0,
+          endIndex: chunk.content.length
         },
-        embedding: undefined, // We don't return embeddings in search results
-        score: 1 - score // Convert distance to similarity score (higher = more similar)
+        embedding: undefined, // Don't return embeddings in search results
+        score: similarity
       }));
 
-      console.log(`🔍 Found ${chunks.length} similar chunks for query: "${query}"`);
-      return chunks;
+      console.log(`🎯 Found ${results.length} similar chunks (scores: ${results.map(r => r.score?.toFixed(3)).join(', ')})`);
+      return results;
     } catch (error) {
       console.error('Error searching vector store:', error);
       throw new Error(`Failed to search similar chunks: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) {
+      throw new Error('Vectors must have same length');
+    }
+    
+    let dotProduct = 0;
+    let magnitudeA = 0;
+    let magnitudeB = 0;
+    
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      magnitudeA += a[i] * a[i];
+      magnitudeB += b[i] * b[i];
+    }
+    
+    magnitudeA = Math.sqrt(magnitudeA);
+    magnitudeB = Math.sqrt(magnitudeB);
+    
+    if (magnitudeA === 0 || magnitudeB === 0) {
+      return 0;
+    }
+    
+    return dotProduct / (magnitudeA * magnitudeB);
+  }
+
   async deleteDocument(documentId: string): Promise<void> {
     try {
-      // Note: Chroma doesn't have a direct way to delete by metadata filter
-      // We would need to implement a more sophisticated approach for production
-      console.log(`🗑️ Document deletion requested for ${documentId}`);
-      // For now, we'll log this - in production you'd want to:
-      // 1. Query for all chunks with this documentId
-      // 2. Delete them by their IDs
+      const beforeCount = this.chunks.length;
+      this.chunks = this.chunks.filter(chunk => chunk.metadata.documentId !== documentId);
+      const deletedCount = beforeCount - this.chunks.length;
+      console.log(`🗑️ Deleted ${deletedCount} chunks for document ${documentId}`);
     } catch (error) {
       console.error('Error deleting document from vector store:', error);
       throw new Error(`Failed to delete document: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -96,14 +164,13 @@ export class VectorStoreService {
 
   async getCollectionInfo(): Promise<{ count: number; collectionName: string }> {
     try {
-      // This is a placeholder - Chroma client doesn't expose collection info directly through LangChain
       return {
-        count: 0,
-        collectionName: 'rag-documents'
+        count: this.chunks.length,
+        collectionName: 'in-memory-store'
       };
     } catch (error) {
       console.error('Error getting collection info:', error);
-      return { count: 0, collectionName: 'rag-documents' };
+      return { count: 0, collectionName: 'in-memory-store' };
     }
   }
 } 

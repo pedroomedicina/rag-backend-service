@@ -7,8 +7,17 @@ import { VectorStoreService } from '../services/vectorStore';
 import { UploadResponse } from '../types';
 
 const router = express.Router();
-const documentProcessor = new DocumentProcessor();
-const vectorStore = new VectorStoreService();
+
+// Initialize services lazily to ensure environment variables are loaded
+let documentProcessor: DocumentProcessor;
+
+function getServices() {
+  if (!documentProcessor) {
+    documentProcessor = new DocumentProcessor();
+  }
+  const vectorStore = VectorStoreService.getInstance();
+  return { documentProcessor, vectorStore };
+}
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -51,6 +60,9 @@ router.post('/', upload.single('document'), async (req, res) => {
     const documentId = uuidv4();
     const filePath = req.file.path;
     const filename = req.file.originalname;
+
+    // Get initialized services
+    const { documentProcessor, vectorStore } = getServices();
 
     // Process the document
     const { content, chunks } = await documentProcessor.processDocument(filePath, filename);
